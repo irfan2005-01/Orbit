@@ -2,6 +2,7 @@
 
 import React, { useState, useSyncExternalStore } from "react";
 import { Preloader } from "@/components/Preloader";
+import { ScrollProgress } from "@/components/ui/scroll-progress";
 import { StudentJoinDrawer, OnboardingTrack } from "@/components/StudentJoinDrawer";
 import { Header } from "@/components/layout/Header";
 import { HeroSection } from "@/components/sections/HeroSection";
@@ -44,7 +45,10 @@ export default function HomePage() {
   };
 
   return (
-    <div className="relative min-h-screen bg-[#162323] text-[#EFE7E4] overflow-x-hidden selection:bg-[#BC806A]/25 selection:text-[#EFE7E4]">
+    <div className="relative min-h-screen bg-[#162323] text-[#EFE7E4] overflow-x-clip selection:bg-[#BC806A]/25 selection:text-[#EFE7E4]">
+      {/* Fixed Top Scroll Depth Progress Bar (#BC806A) */}
+      <ScrollProgress />
+
       {/* Pure-GPU Zoom-Through Letter-Fill Preloader */}
       <Preloader onExitStart={() => setPreloaderDismissed(true)} />
 

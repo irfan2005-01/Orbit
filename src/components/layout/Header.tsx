@@ -2,7 +2,6 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { ScrollProgress } from "@/components/ui/scroll-progress";
 import { BRAND_CONFIG, navLinks } from "@/data/psyctech";
 import { Menu, X } from "lucide-react";
 
@@ -25,9 +24,6 @@ export function Header({ onOpenJoin }: HeaderProps) {
   };
 
   return (
-    <>
-      <ScrollProgress className="bg-[#BC806A] z-50 h-0.5" />
-
       <header className="sticky top-0 z-40 w-full bg-[#162323]/80 backdrop-blur-md border-b border-[#484A43]/40 transition-colors">
         <div className="max-w-5xl mx-auto px-6 h-18 flex items-center justify-between">
           {/* Left: Clean uppercase tracked wordmark */}
@@ -116,6 +112,5 @@ export function Header({ onOpenJoin }: HeaderProps) {
           </div>
         )}
       </header>
-    </>
   );
 }

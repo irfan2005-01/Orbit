@@ -53,7 +53,7 @@ export default function RootLayout({
       lang="en"
       className={`${inter.variable} ${plusJakartaSans.variable} ${jetbrainsMono.variable} dark scroll-smooth`}
     >
-      <body className="min-h-screen bg-[#162323] text-[#EFE7E4] font-sans antialiased selection:bg-[#BC806A]/25 selection:text-[#EFE7E4] overflow-x-hidden">
+      <body className="min-h-screen bg-[#162323] text-[#EFE7E4] font-sans antialiased selection:bg-[#BC806A]/25 selection:text-[#EFE7E4] overflow-x-clip">
         {children}
       </body>
     </html>

@@ -87,7 +87,7 @@ body {
   background-color: #162323;
   color: #EFE7E4;
   font-family: var(--font-sans), sans-serif;
-  overflow-x: hidden;
+  overflow-x: clip;
   letter-spacing: -0.01em;
 }
 

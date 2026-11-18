@@ -1,109 +1,28 @@
 "use client";
 
 import React, { useEffect, useRef } from "react";
-
-interface Particle {
-  homeX: number;
-  homeY: number;
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  radius: number;
-  baseR: number;
-  baseG: number;
-  baseB: number;
-  baseAlpha: number;
-  phase: number;
-  driftSpeed: number;
-  driftAmp: number;
-  heat: number; // 0 = base color, 1 = full Brick Rose (#BC806A)
-}
-
-const LOGICAL_SIZE = 420;
-const CENTER = LOGICAL_SIZE / 2;
-const OUTER_RADIUS = 145;
-const INNER_RADIUS = 88;
-const INTERACT_RADIUS = 95;
-const FRICTION = 0.86;
-const SPRING_EASE = 0.065;
-
-// Exact Petroleum & Brick Rose RGB tuples
-const COLOR_IVORY = [239, 231, 228] as const; // #EFE7E4
-const COLOR_SAND = [181, 146, 137] as const;  // #B59289
-const COLOR_BRICK = [188, 128, 106] as const; // #BC806A
-
-function createParticles(count: number): Particle[] {
-  const particles: Particle[] = [];
-  const rOutSq = OUTER_RADIUS * OUTER_RADIUS;
-  const rInSq = INNER_RADIUS * INNER_RADIUS;
-
-  // Deterministic pseudo-random generator for clean, balanced distribution
-  let seed = 4219;
-  const rand = () => {
-    seed = (seed * 1664525 + 1013904223) % 4294967296;
-    return seed / 4294967296;
-  };
-
-  for (let i = 0; i < count; i++) {
-    const angle = rand() * Math.PI * 2;
-
-    // 16% of particles hug the inner/outer rims tightly for crisp architectural definition
-    let r: number;
-    if (i < count * 0.08) {
-      r = OUTER_RADIUS - rand() * 3.5;
-    } else if (i < count * 0.16) {
-      r = INNER_RADIUS + rand() * 3.5;
-    } else {
-      // Uniform area distribution across the annulus
-      r = Math.sqrt(rand() * (rOutSq - rInSq) + rInSq);
-    }
-
-    const homeX = CENTER + Math.cos(angle) * r;
-    const homeY = CENTER + Math.sin(angle) * r;
-
-    // Color distribution: ~20% Brick Rose accent, ~45% Warm Sand-White, ~35% Rosy Sand
-    const colorPick = rand();
-    const baseColor =
-      colorPick < 0.2
-        ? COLOR_BRICK
-        : colorPick < 0.65
-        ? COLOR_IVORY
-        : COLOR_SAND;
-
-    const radius = 1.2 + rand() * 1.0; // 1.2px – 2.2px
-    const baseAlpha = 0.65 + rand() * 0.25; // 65% – 90%
-
-    particles.push({
-      homeX,
-      homeY,
-      x: homeX,
-      y: homeY,
-      vx: 0,
-      vy: 0,
-      radius,
-      baseR: baseColor[0],
-      baseG: baseColor[1],
-      baseB: baseColor[2],
-      baseAlpha,
-      phase: rand() * Math.PI * 2,
-      driftSpeed: 0.45 + rand() * 0.55,
-      driftAmp: 1.0 + rand() * 1.4,
-      heat: 0,
-    });
-  }
-
-  return particles;
-}
+import {
+  CENTER,
+  INNER_RADIUS,
+  LOGICAL_SIZE,
+  OUTER_RADIUS,
+  PARTICLE_COUNT,
+  createParticles,
+  stepParticleField,
+  type PointerState,
+} from "@/lib/particle-physics";
 
 export function OrbiteParticleO() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const pointerRef = useRef<{ x: number; y: number; active: boolean }>({
+  const pointerRef = useRef<PointerState>({
     x: -9999,
     y: -9999,
+    vx: 0,
+    vy: 0,
     active: false,
   });
+  const prevPointerPosRef = useRef<{ x: number; y: number; time: number } | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -113,7 +32,7 @@ export function OrbiteParticleO() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const particles = createParticles(1050);
+    const particles = createParticles(PARTICLE_COUNT);
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     let animFrame = 0;
@@ -138,7 +57,7 @@ export function OrbiteParticleO() {
     const resizeObserver = new ResizeObserver(() => {
       resize();
       if (reducedMotion) {
-        drawFrame(0, true);
+        drawFrame(0, 0.016, true);
       }
     });
     resizeObserver.observe(container);
@@ -175,82 +94,58 @@ export function OrbiteParticleO() {
       ctx.stroke();
     };
 
-    const drawFrame = (timeSec: number, isStatic: boolean) => {
+    const drawFrame = (timeSec: number, dt: number, isStatic: boolean) => {
       ctx.clearRect(0, 0, LOGICAL_SIZE, LOGICAL_SIZE);
       drawGuideRings();
 
       const pointer = pointerRef.current;
-      const interactSq = INTERACT_RADIUS * INTERACT_RADIUS;
+
+      if (!isStatic) {
+        stepParticleField(particles, pointer, timeSec, dt);
+
+        // Smoothly decay pointer wake velocity when cursor pauses
+        const wakeDecay = Math.exp(-8 * Math.min(dt, 0.04));
+        pointer.vx *= wakeDecay;
+        pointer.vy *= wakeDecay;
+      }
+
+      // Batch tiny white particles into 6 opacity buckets (6 draw calls total per frame)
+      const BUCKETS = 6;
+      const bucketIndices: number[][] = Array.from({ length: BUCKETS }, () => []);
 
       for (let i = 0; i < particles.length; i++) {
         const p = particles[i];
+        const alpha = Math.min(1, p.baseAlpha + p.heat * 0.42);
+        const idx = Math.min(BUCKETS - 1, Math.max(0, Math.floor(((alpha - 0.4) / 0.6) * BUCKETS)));
+        bucketIndices[idx].push(i);
+      }
 
-        if (!isStatic) {
-          // Gentle living micro-drift around home position
-          const driftX = Math.cos(timeSec * p.driftSpeed + p.phase) * p.driftAmp;
-          const driftY = Math.sin(timeSec * p.driftSpeed * 0.85 + p.phase) * p.driftAmp;
-          const targetX = p.homeX + driftX;
-          const targetY = p.homeY + driftY;
+      for (let b = 0; b < BUCKETS; b++) {
+        const list = bucketIndices[b];
+        if (list.length === 0) continue;
 
-          // Cursor repulsion inside 95px radius
-          let displaced = false;
-          if (pointer.active) {
-            const dx = p.x - pointer.x;
-            const dy = p.y - pointer.y;
-            const distSq = dx * dx + dy * dy;
-
-            if (distSq < interactSq && distSq > 0.0001) {
-              const dist = Math.sqrt(distSq);
-              const proximity = 1 - dist / INTERACT_RADIUS;
-              const force = proximity * proximity * 5.2;
-
-              p.vx += (dx / dist) * force;
-              p.vy += (dy / dist) * force;
-              p.heat = Math.min(1, p.heat + proximity * 0.35);
-              displaced = true;
-            }
-          }
-
-          // Smooth spring return back to home coordinate
-          p.vx += (targetX - p.x) * SPRING_EASE;
-          p.vy += (targetY - p.y) * SPRING_EASE;
-
-          // Velocity damping (friction: 0.86)
-          p.vx *= FRICTION;
-          p.vy *= FRICTION;
-
-          p.x += p.vx;
-          p.y += p.vy;
-
-          // Smoothly cool Brick Rose tint back to base color when returning home
-          if (!displaced && p.heat > 0) {
-            const homeDist = Math.hypot(p.x - targetX, p.y - targetY);
-            const targetHeat = Math.min(1, homeDist / 45);
-            p.heat += (targetHeat - p.heat) * 0.1;
-            if (p.heat < 0.01) p.heat = 0;
-          }
-        }
-
-        // Interpolate tint toward Brick Rose (#BC806A) when displaced
-        const h = p.heat;
-        const r = Math.round(p.baseR + (COLOR_BRICK[0] - p.baseR) * h);
-        const g = Math.round(p.baseG + (COLOR_BRICK[1] - p.baseG) * h);
-        const b = Math.round(p.baseB + (COLOR_BRICK[2] - p.baseB) * h);
-        const alpha = Math.min(0.98, p.baseAlpha + h * 0.2);
-
+        const bucketAlpha = Math.min(1, 0.45 + (b / (BUCKETS - 1)) * 0.55);
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)})`;
+        for (let j = 0; j < list.length; j++) {
+          const p = particles[list[j]];
+          const drawRadius = p.radius + p.heat * 0.25;
+          ctx.moveTo(p.x + drawRadius, p.y);
+          ctx.arc(p.x, p.y, drawRadius, 0, Math.PI * 2);
+        }
+        ctx.fillStyle = `rgba(255, 255, 255, ${bucketAlpha.toFixed(2)})`;
         ctx.fill();
       }
     };
 
     if (reducedMotion) {
-      drawFrame(0, true);
+      drawFrame(0, 0.016, true);
     } else {
       const startTime = performance.now();
+      let lastTime = startTime;
       const loop = (now: number) => {
-        drawFrame((now - startTime) / 1000, false);
+        const dt = (now - lastTime) / 1000;
+        lastTime = now;
+        drawFrame((now - startTime) / 1000, dt, false);
         animFrame = requestAnimationFrame(loop);
       };
       animFrame = requestAnimationFrame(loop);
@@ -262,15 +157,30 @@ export function OrbiteParticleO() {
     };
   }, []);
 
-  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+  const updatePointer = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+
     const scaleX = LOGICAL_SIZE / rect.width;
     const scaleY = LOGICAL_SIZE / rect.height;
+    const nextX = (e.clientX - rect.left) * scaleX;
+    const nextY = (e.clientY - rect.top) * scaleY;
+    const now = performance.now();
 
-    pointerRef.current.x = (e.clientX - rect.left) * scaleX;
-    pointerRef.current.y = (e.clientY - rect.top) * scaleY;
+    const prev = prevPointerPosRef.current;
+    if (prev) {
+      const dt = Math.max(0.008, (now - prev.time) / 1000);
+      const rawVx = Math.max(-500, Math.min(500, (nextX - prev.x) / dt));
+      const rawVy = Math.max(-500, Math.min(500, (nextY - prev.y) / dt));
+      pointerRef.current.vx = pointerRef.current.vx * 0.5 + rawVx * 0.5;
+      pointerRef.current.vy = pointerRef.current.vy * 0.5 + rawVy * 0.5;
+    }
+
+    prevPointerPosRef.current = { x: nextX, y: nextY, time: now };
+    pointerRef.current.x = nextX;
+    pointerRef.current.y = nextY;
     pointerRef.current.active = true;
   };
 
@@ -278,6 +188,9 @@ export function OrbiteParticleO() {
     pointerRef.current.active = false;
     pointerRef.current.x = -9999;
     pointerRef.current.y = -9999;
+    pointerRef.current.vx = 0;
+    pointerRef.current.vy = 0;
+    prevPointerPosRef.current = null;
   };
 
   return (
@@ -287,7 +200,10 @@ export function OrbiteParticleO() {
     >
       <canvas
         ref={canvasRef}
-        onPointerMove={handlePointerMove}
+        data-testid="orbite-particle-o"
+        onPointerEnter={updatePointer}
+        onPointerMove={updatePointer}
+        onPointerDown={updatePointer}
         onPointerLeave={handlePointerLeave}
         className="block cursor-crosshair touch-none"
         aria-label="Interactive Orbite particle letter O graphic"
